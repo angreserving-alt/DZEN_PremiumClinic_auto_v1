@@ -22,6 +22,7 @@ VMIN, VMAX = 8500, 9500
 BOLD_LIMIT = 3
 PARA_LINES = 7
 CHECK_EMERGENCY = True   # True — призыв в 103/112 требует ручного решения
+IMG_COUNT = 3        # сколько изображений должно быть в статье
 
 # ============================================================
 # ЕДИНОЕ ИИ-ЯДРО — одинаковое для всех пяти клиник
@@ -262,14 +263,16 @@ def main(path):
         manual.append("проверить, что 103/112 стоят по месту")
 
     print("\n[ПРАВКИ] распределение изображений:")
-    img_marks = [m.start() for m in re.finditer(r'(?:!\[|\[\s*ИЗОБРАЖЕНИЕ)', raw, re.I)]
-    print(f"  меток изображений: {len(img_marks)}")
+    _n = re.sub(r'!\[[^\]]*\]\([^)]*\)', '<IMG>', raw)
+    _n = re.sub(r'\[\s*ИЗОБРАЖЕНИЕ[^\]]*\]', '<IMG>', _n, flags=re.I)
+    img_marks = [m.start() for m in re.finditer(r'<IMG>', _n)]
+    print(f"  изображений в тексте: {len(img_marks)}")
     if len(img_marks) >= 2:
         gaps = [img_marks[i + 1] - img_marks[i] for i in range(len(img_marks) - 1)]
         tight = [g for g in gaps if g < 400]
-        print(f"  промежутки между метками (знаков): {gaps}")
+        print(f"  промежутки между картинками (знаков): {gaps}")
         if tight:
-            print("  !! две метки стоят почти подряд — изображения распределяются равномерно")
+            print("  !! две картинки стоят почти подряд — изображения распределяются равномерно")
             problems.append("изображения не распределены")
         else:
             print("  распределены - OK")
@@ -321,10 +324,49 @@ def main(path):
     if not has_src:
         problems.append("нет источников")
 
+    # ====== картинки: настоящий markdown, а не текстовая метка ======
+    print("\n[КАРТИНКИ]")
+    marks = re.findall(r'\[\s*ИЗОБРАЖЕНИЕ[^\]]*\]', raw, re.I)
+    if marks:
+        print(f"  !! осталось текстовых меток: {len(marks)} - Дзен покажет их текстом, а не картинкой")
+        for m in marks[:6]:
+            print("     " + m[:70])
+        problems.append("остались текстовые метки изображений")
+
+    imgs = re.findall(r'!\[([^\]]*)\]\(([^)]*)\)', raw)
+    ok_cnt = len(imgs) == IMG_COUNT
+    print(f"  markdown-картинок: {len(imgs)} (нужно {IMG_COUNT})" + ("" if ok_cnt else "  !!"))
+    if not ok_cnt:
+        problems.append(f"картинок {len(imgs)}, а нужно {IMG_COUNT}")
+
+    bad = [u for _, u in imgs if not u.lower().startswith('http')]
+    if bad:
+        print(f"  !! вместо ссылки заглушка: {len(bad)} шт")
+        for u in bad[:4]:
+            print("     " + (u[:60] if u.strip() else "(пусто)"))
+        problems.append("в картинке не настоящая ссылка")
+
+    noalt = [u for a, u in imgs if not a.strip()]
+    if noalt:
+        print(f"  !! без описания в alt: {len(noalt)} шт")
+        problems.append("у картинки пустой alt")
+
+    nocap = []
+    for m in re.finditer(r'!\[[^\]]*\]\([^)]*\)', raw):
+        after = raw[m.end():m.end() + 400]
+        if not re.match(r'[ \t]*\n[ \t]*\n[ \t]*(\*\*)?\s*Подпись', after):
+            nocap.append(raw[m.start():m.start() + 50])
+    if nocap:
+        print(f"  !! без подписи отдельной строкой: {len(nocap)} шт")
+        for s in nocap[:4]:
+            print("     " + s.replace('\n', ' '))
+        problems.append("у картинки нет подписи")
+    elif imgs:
+        print("  подписи на месте - OK")
+
     print("\n[ССЫЛКИ]")
     for l in sorted(set(re.findall(r'https?://[^\s)]+', raw))):
         print("  " + l)
-    print(f"[КАРТИНКИ] найдено: {raw.count(chr(33) + chr(91))}")
 
     print("\n" + "=" * 64)
     print("ИТОГ: ГОТОВО К СДАЧЕ" if not problems else "ИТОГ: ЕСТЬ ЗАМЕЧАНИЯ - " + ", ".join(problems))
